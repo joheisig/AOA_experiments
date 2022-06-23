@@ -1,0 +1,26 @@
+{
+    "id": "EF504981",
+    "path": "~/PhD_home/repos/AOA_experiments/aoa_experiments_kmeans.R",
+    "project_path": "aoa_experiments_kmeans.R",
+    "type": "r_source",
+    "hash": "4286091333",
+    "contents": "",
+    "dirty": false,
+    "created": 1655905565239.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "137,37",
+        "scrollLine": "125"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1655967164,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1655967164710,
+    "read_only": false,
+    "read_only_alternatives": []
+}

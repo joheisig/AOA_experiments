@@ -1,0 +1,140 @@
+library(stars)
+library(sf)
+library(raster)
+library(mapview)
+library(dplyr)
+library(CAST)
+getwd()
+sen_ms <- stack("Sen_Muenster.grd") %>% scale()
+#sen_ms = aggregate(sen_ms, 2)
+some_color = list("darkgreen", "sienna", "slateblue")
+seed = 42
+
+sen_ms_st = st_as_stars(sen_ms)
+bb = sen_ms_st %>% st_bbox() 
+sen_bb = st_as_sfc(bb) #|> st_buffer(-50)
+
+# 1. regular grid
+offset = bb[c("xmin", "ymin")]-250
+reg1 = st_make_grid(sen_ms_st,1800, what = "centers", offset = offset) %>%
+  st_extract(sen_ms_st, .) %>% st_as_sf()
+reg2 = sen_ms_st %>% st_make_grid(950, what = "centers", offset = offset) %>%
+  st_extract(sen_ms_st, .) %>% st_as_sf() %>% slice_head(n=60)
+reg3 = sen_ms_st %>% st_make_grid(700, what = "centers", offset = offset) %>% 
+  st_extract(sen_ms_st, .) %>% st_as_sf()
+
+nrow(reg1);nrow(reg2);nrow(reg3)
+mapview(sen_bb, alpha.regions=0) + 
+  mapview(list(reg1, reg2, reg3), col.regions=some_color) 
+
+# 2. random locations
+set.seed(seed)
+rand1 = sen_bb %>% st_sample(20) %>% st_extract(sen_ms_st, .) %>% st_as_sf()
+rand2 = sen_bb %>% st_sample(60) %>% st_extract(sen_ms_st, .) %>% st_as_sf()
+rand3 = sen_bb %>% st_sample(120) %>% st_extract(sen_ms_st, .) %>% st_as_sf()
+
+mapview(sen_bb, alpha.regions=0) + 
+  mapview(list(rand1, rand2, rand3), col.regions=some_color) 
+
+
+# 3a. cluster predictors
+
+n=10
+k = sen_ms %>% as.matrix() %>% na.omit() %>% kmeans(n)
+strat_ras = sen_ms[[1]] %>% setValues(k$cluster) 
+
+spplot(strat_ras, col.regions = rainbow(n+1), 
+       main = paste("Predictor stack in", n, "clusters"),
+       colorkey = list(space = "right", at = c(0:n)+.5))
+
+# 3b. stratified random locations
+
+set.seed(seed)
+strat1 = sampleStratified(strat_ras, 2, xy=T, sp=T)[,2:3] %>% 
+  st_as_sf() %>% st_extract(sen_ms_st, .) %>% st_as_sf()
+strat2 = sampleStratified(strat_ras, 6, xy=T, sp=T)[,2:3] %>% 
+  st_as_sf() %>% st_extract(sen_ms_st, .) %>% st_as_sf()
+strat3 = sampleStratified(strat_ras, 12, xy=T, sp=T)[,2:3] %>% 
+  st_as_sf() %>% st_extract(sen_ms_st, .) %>% st_as_sf()
+
+mapview(sen_bb, alpha.regions=0) + 
+  mapview(list(strat1, strat2, strat3), col.regions=some_color) 
+
+# show sampling desings (n=60)
+mapview(list(reg2, rand2, strat2), color=NA, alpha=0, alpha.regions=0.9,
+          col.regions = list("orange", "blueviolet", "darkgreen"),
+          layer.name = list("regular", "random","stratified"))
+
+# 4. Evaluate AOA
+train1=st_drop_geometry(reg1)
+train2=st_drop_geometry(reg2)
+train3=st_drop_geometry(reg3)
+train4=st_drop_geometry(rand1)
+train5=st_drop_geometry(rand2)
+train6=st_drop_geometry(rand3)
+train7=st_drop_geometry(strat1)
+train8=st_drop_geometry(strat2)
+train9=st_drop_geometry(strat3)
+
+# zero NAs ?
+lapply(list(train1,train2,train3,train4,train5,train6,train7,train8,train9), 
+       function(x) sum(is.na(x))==0) |> unlist()
+
+aoa_names = paste0("n", c(nrow(train1), nrow(train4), nrow(train7), nrow(train2), 
+              nrow(train5), nrow(train8), nrow(train3), nrow(train6), nrow(train9)),
+       rep(c("_regular","_random","_stratified"), 3))
+
+cl = parallel::makeCluster(6)
+aoa1 = aoa(sen_ms, train = train1, cl = cl) 
+aoa2 = aoa(sen_ms, train = train2, cl = cl) 
+aoa3 = aoa(sen_ms, train = train3, cl = cl) 
+aoa4 = aoa(sen_ms, train = train4, cl = cl)
+aoa5 = aoa(sen_ms, train = train5, cl = cl)
+aoa6 = aoa(sen_ms, train = train6, cl = cl)
+aoa7 = aoa(sen_ms, train = train7, cl = cl)
+aoa8 = aoa(sen_ms, train = train8, cl = cl)
+aoa9 = aoa(sen_ms, train = train9, cl = cl)
+
+di = stack(aoa1[[2]], aoa4[[2]], aoa7[[2]], aoa2[[2]], aoa5[[2]], aoa8[[2]],
+           aoa3[[2]],  aoa6[[2]], aoa9[[2]]) 
+dilog = di %>% log() %>% 
+  spplot(layout = c(3,3), colorkey = list(space = "bottom"), main="log( Dissimilarity Index )",
+         names.attr = aoa_names)
+di = di %>% spplot(layout = c(3,3))
+
+ao = stack(aoa1[[3]], aoa4[[3]], aoa7[[3]], aoa3[[3]], aoa5[[3]], aoa8[[3]],
+           aoa3[[3]],  aoa6[[3]], aoa9[[3]]) %>% 
+  spplot(col.regions = c("tomato1","lightseagreen"), layout = c(3,3), main = "AOA",
+         names.attr = aoa_names,
+         colorkey = list(space = "bottom", at = c(0,.5,1),
+                         labels = list(labels =c("outside", "inside"),
+                                       at = c(0.25, 0.75))))
+
+gridExtra::grid.arrange(dilog, ao, ncol=2)
+
+# ===================================
+
+nc = ncell(aoa1$DI)
+as = c(aoa1,aoa4,aoa7,aoa2,aoa5,aoa8,aoa3,aoa6,aoa9)
+p_outside = data.frame(sample = aoa_names, p = 0, g=rep(c("regular","random","stratified"), 3), 
+                       n = c(20,20,20,60,60,60,120,120,120))
+for (i in 1:nrow(p_outside)){ 
+  p_outside$p[i] = (sum(values(as[[i*3]]) == 0) / nc) * 100
+}
+
+p_outside$n = factor(p_outside$n, 
+                     levels = unique(p_outside$n[order(p_outside$p, decreasing = T)]))
+library(ggplot2)
+x11()
+p_outside %>% 
+  ggplot(aes(x=as.factor(n), y=p, fill=g)) + 
+  geom_bar(stat = 'identity', position = "dodge")+
+  #scale_x_discrete(breaks = c("20","60","120")) +
+  #scale_x_continuous(breaks = c(20,60,120))+
+  coord_flip() +
+  scale_fill_manual(values = c("blueviolet","orange", "darkgreen"), name="")+
+  labs(x="n. samples", y="% outside AOA") +
+  theme_minimal()+
+  theme(legend.position = c(0.8,0.8))
+
+
